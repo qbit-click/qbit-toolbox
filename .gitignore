@@ -1,24 +1,45 @@
+# Dependencies and package-manager files
+node_modules/
+
+# JavaScript and Next.js build output and caches
+.next/
+out/
+/apps/desktop/next-env.d.ts
+coverage/
+.cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+
+# Rust and Tauri build output
+target/
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
+bun-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
 
-# Editor directories and files
+# OS and editor-local files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Local agent work files
+.ai-bridge/

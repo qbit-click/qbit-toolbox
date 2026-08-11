@@ -1,0 +1,62 @@
+use persistence::{CoreStore, DurabilityProfile, PersistenceError};
+use tempfile::tempdir;
+
+#[test]
+fn fresh_open_creates_schema_version_one_at_the_core_database_path() {
+    let directory = tempdir().unwrap();
+    let store = CoreStore::open(directory.path(), DurabilityProfile::Critical).unwrap();
+
+    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(
+        store.database_path(),
+        directory.path().join("data").join("core.db")
+    );
+    assert!(store.database_path().is_file());
+}
+
+#[test]
+fn reopening_is_idempotent_and_preserves_schema_and_state() {
+    let directory = tempdir().unwrap();
+    let database_path;
+
+    {
+        let store = CoreStore::open(directory.path(), DurabilityProfile::Standard).unwrap();
+        store.set_feature_enabled("qbit.example", true).unwrap();
+        database_path = store.database_path().to_owned();
+    }
+
+    let reopened = CoreStore::open(directory.path(), DurabilityProfile::Standard).unwrap();
+
+    assert_eq!(reopened.database_path(), database_path);
+    assert_eq!(reopened.schema_version().unwrap(), 1);
+    assert_eq!(
+        reopened.feature_enabled("qbit.example").unwrap(),
+        Some(true)
+    );
+}
+
+#[test]
+fn feature_enabled_insert_and_update_roundtrip() {
+    let directory = tempdir().unwrap();
+    let store = CoreStore::open(directory.path(), DurabilityProfile::Standard).unwrap();
+
+    assert_eq!(store.feature_enabled("qbit.example").unwrap(), None);
+    store.set_feature_enabled("qbit.example", true).unwrap();
+    assert_eq!(store.feature_enabled("qbit.example").unwrap(), Some(true));
+    store.set_feature_enabled("qbit.example", false).unwrap();
+    assert_eq!(store.feature_enabled("qbit.example").unwrap(), Some(false));
+}
+
+#[test]
+fn rebuildable_is_rejected_without_creating_core_database() {
+    let directory = tempdir().unwrap();
+    let database_path = directory.path().join("data").join("core.db");
+
+    assert!(matches!(
+        CoreStore::open(directory.path(), DurabilityProfile::Rebuildable),
+        Err(PersistenceError::InvalidDurabilityProfile {
+            profile: DurabilityProfile::Rebuildable
+        })
+    ));
+    assert!(!database_path.exists());
+}

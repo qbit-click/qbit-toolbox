@@ -1,0 +1,10 @@
+[package]
+name = "app-runtime"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+feature-api = { path = "../feature-api" }
+
+[lib]
+path = "src/lib.rs"

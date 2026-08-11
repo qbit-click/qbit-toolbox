@@ -1251,7 +1251,23 @@ Remote script execution, CDN-hosted application JavaScript, `eval`-style code ex
 
 External links SHOULD open through a validated external opener rather than navigating the application shell.
 
-## 16.4 Privilege policy
+## 16.4 Runtime style CSP nonce propagation
+
+Tauri asset CSP modification injects cryptographic nonces/hashes into bundled assets; production MUST keep this protection enabled unless a security ADR explicitly proves another design.
+
+Runtime CSS-in-JS engines (currently Emotion via MUI/MD3 Next) MUST create dynamically inserted `<style>` elements with a nonce already authorized by the current Tauri document CSP.
+
+The frontend integration layer MUST read the nonce from the DOM `nonce` property of a Tauri-nonced bundled style/script and pass it into the Emotion cache at cache creation time. Never use `getAttribute("nonce")` as the source because browsers may hide nonce values there.
+
+The nonce is per-document security metadata: it MUST NOT be hard-coded, persisted, logged, sent over IPC, or surfaced to UI/telemetry.
+
+Do not weaken CSP (`dangerousDisableAssetCspModification`, wildcard sources, or broadening inline policy) to make dynamic styling work. Fix nonce propagation at the styling integration boundary.
+
+For the current Next App Router stack, `AppRouterCacheProvider`/Emotion cache owns this integration; MD3 feature/app components MUST NOT manage CSP or custom Emotion caches themselves.
+
+Production validation MUST cover both static placement (Emotion SSR styles in `<head>`) and runtime insertion under real Tauri CSP; a theme switch must prove that newly generated stylesheets are active, not merely that UI preference state changed.
+
+## 16.5 Privilege policy
 
 The main application MUST run as a normal user by default.
 
@@ -1264,7 +1280,7 @@ If a future operation genuinely requires elevation:
 - IPC to the privileged component is authenticated/validated as appropriate;
 - the full UI process does not inherit elevation unnecessarily.
 
-## 16.5 Unsafe Rust
+## 16.6 Unsafe Rust
 
 Unsafe code is allowed only when required for OS/FFI/native performance boundaries.
 
@@ -1276,13 +1292,13 @@ Policy:
 - unsafe boundaries require focused tests and reviewer attention;
 - business/domain/application layers MUST remain safe Rust.
 
-## 16.6 Input validation
+## 16.7 Input validation
 
 All IPC, file, URL, imported configuration, and platform-derived untrusted values must be validated before they reach sensitive operations.
 
 Validation belongs at the boundary plus domain invariants, not only in UI controls.
 
-## 16.7 Supply-chain security
+## 16.8 Supply-chain security
 
 - GitHub Actions from external repositories MUST be pinned to full immutable commit SHAs.
 - Workflow permissions MUST use least privilege.

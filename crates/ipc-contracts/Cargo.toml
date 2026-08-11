@@ -1,0 +1,15 @@
+[package]
+name = "ipc-contracts"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+serde_json = "1"
+
+[[bin]]
+name = "generate-ipc"
+path = "src/bin/generate-ipc.rs"
