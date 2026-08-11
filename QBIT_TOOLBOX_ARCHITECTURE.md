@@ -1064,6 +1064,7 @@ Every persistent database has an explicit schema version and migration history.
 Migration rules:
 
 - migrations are **forward-only** in shipped application code;
+- migration declarations/plans MUST use positive, strictly increasing unique versions and non-empty stable names, and the shared persistence layer MUST validate the plan before creating/updating migration metadata or applying migration SQL;
 - migrations MUST be deterministic;
 - migrations MUST be tested against fixtures from previously released schema versions;
 - transactional migrations SHOULD run in one transaction where SQLite permits it;

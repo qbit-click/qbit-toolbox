@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 rusqlite.workspace = true
+feature-api = { path = "../feature-api" }
 
 [dev-dependencies]
 tempfile.workspace = true

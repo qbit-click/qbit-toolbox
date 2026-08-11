@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-//! Durable SQLite storage for application-wide state.
+//! Shared SQLite connection, durability, and migration policy, plus durable core state.
 
 use std::error::Error;
 use std::fmt;
@@ -9,6 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use feature_api::{FeatureId, FeatureIdError};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 const DATABASE_DIRECTORY: &str = "data";
@@ -23,7 +24,7 @@ pub enum DurabilityProfile {
     Rebuildable,
 }
 
-/// Errors raised while opening or using the core store.
+/// Errors raised while opening or using a persistence store.
 #[derive(Debug)]
 pub enum PersistenceError {
     Io {
@@ -40,6 +41,9 @@ pub enum PersistenceError {
         name: &'static str,
         source: rusqlite::Error,
     },
+    InvalidMigrationPlan {
+        source: MigrationPlanError,
+    },
     FutureSchema {
         current_version: i64,
         latest_supported_version: i64,
@@ -47,7 +51,40 @@ pub enum PersistenceError {
     InconsistentSchema {
         detail: String,
     },
+    InvalidFeatureId {
+        source: FeatureIdError,
+    },
 }
+
+/// Errors in a migration plan supplied to [`run_migrations`].
+#[derive(Debug, Eq, PartialEq)]
+pub enum MigrationPlanError {
+    NonPositiveVersion { version: i64 },
+    VersionsNotStrictlyIncreasing { previous_version: i64, version: i64 },
+    EmptyName { version: i64 },
+}
+
+impl fmt::Display for MigrationPlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonPositiveVersion { version } => {
+                write!(formatter, "migration version {version} must be positive")
+            }
+            Self::VersionsNotStrictlyIncreasing {
+                previous_version,
+                version,
+            } => write!(
+                formatter,
+                "migration version {version} must be greater than previous version {previous_version}"
+            ),
+            Self::EmptyName { version } => {
+                write!(formatter, "migration {version} has an empty name")
+            }
+        }
+    }
+}
+
+impl Error for MigrationPlanError {}
 
 impl fmt::Display for PersistenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,7 +94,7 @@ impl fmt::Display for PersistenceError {
             Self::InvalidDurabilityProfile { profile } => {
                 write!(
                     formatter,
-                    "durability profile {profile:?} is not valid for core.db"
+                    "durability profile {profile:?} is not valid for this store"
                 )
             }
             Self::Migration {
@@ -66,6 +103,9 @@ impl fmt::Display for PersistenceError {
                 source,
             } => {
                 write!(formatter, "migration {version} ({name}) failed: {source}")
+            }
+            Self::InvalidMigrationPlan { source } => {
+                write!(formatter, "invalid migration plan: {source}")
             }
             Self::FutureSchema {
                 current_version,
@@ -77,6 +117,7 @@ impl fmt::Display for PersistenceError {
             Self::InconsistentSchema { detail } => {
                 write!(formatter, "inconsistent database schema: {detail}")
             }
+            Self::InvalidFeatureId { source } => write!(formatter, "invalid feature id: {source}"),
         }
     }
 }
@@ -86,11 +127,74 @@ impl Error for PersistenceError {
         match self {
             Self::Io { source } => Some(source),
             Self::Sqlite { source } | Self::Migration { source, .. } => Some(source),
+            Self::InvalidMigrationPlan { source } => Some(source),
+            Self::InvalidFeatureId { source } => Some(source),
             Self::InvalidDurabilityProfile { .. }
             | Self::FutureSchema { .. }
             | Self::InconsistentSchema { .. } => None,
         }
     }
+}
+
+/// An opened feature-owned database. Features retain ownership of tables and migrations;
+/// this type centralizes canonical paths and SQLite connection policy.
+#[derive(Debug)]
+pub struct FeatureDatabase {
+    connection: Connection,
+    database_path: PathBuf,
+}
+
+impl FeatureDatabase {
+    pub fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
+    /// Transfers the configured connection to the feature repository that owns its schema.
+    pub fn into_connection(self) -> Connection {
+        self.connection
+    }
+}
+
+/// Returns the canonical location for a feature's relational database.
+pub fn feature_database_path(
+    app_data_root: impl AsRef<Path>,
+    feature_id: &str,
+) -> Result<PathBuf, PersistenceError> {
+    let id = FeatureId::new(feature_id)
+        .map_err(|source| PersistenceError::InvalidFeatureId { source })?;
+    Ok(app_data_root
+        .as_ref()
+        .join(DATABASE_DIRECTORY)
+        .join("features")
+        .join(id.as_str())
+        .join("data.db"))
+}
+
+/// Opens a feature-owned database with the shared durability and connection policy.
+pub fn open_feature_database(
+    app_data_root: impl AsRef<Path>,
+    feature_id: &str,
+    profile: DurabilityProfile,
+) -> Result<FeatureDatabase, PersistenceError> {
+    if profile == DurabilityProfile::Rebuildable {
+        return Err(PersistenceError::InvalidDurabilityProfile { profile });
+    }
+    let id = FeatureId::new(feature_id)
+        .map_err(|source| PersistenceError::InvalidFeatureId { source })?;
+    let feature_directory = app_data_root
+        .as_ref()
+        .join(DATABASE_DIRECTORY)
+        .join("features")
+        .join(id.as_str());
+    fs::create_dir_all(&feature_directory).map_err(|source| PersistenceError::Io { source })?;
+    let database_path = feature_directory.join("data.db");
+    let connection =
+        Connection::open(&database_path).map_err(|source| PersistenceError::Sqlite { source })?;
+    configure_connection(&connection, profile)?;
+    Ok(FeatureDatabase {
+        connection,
+        database_path,
+    })
 }
 
 /// A durable, application-wide SQLite store.
@@ -158,7 +262,7 @@ impl CoreStore {
     }
 
     pub fn schema_version(&self) -> Result<i64, PersistenceError> {
-        schema_version(&self.connection)
+        database_schema_version(&self.connection)
     }
 }
 
@@ -184,10 +288,24 @@ fn configure_connection(
         .map_err(|source| PersistenceError::Sqlite { source })
 }
 
-struct Migration {
+pub struct Migration {
     version: i64,
     name: &'static str,
     apply: fn(&Transaction<'_>) -> rusqlite::Result<()>,
+}
+
+impl Migration {
+    pub const fn new(
+        version: i64,
+        name: &'static str,
+        apply: fn(&Transaction<'_>) -> rusqlite::Result<()>,
+    ) -> Self {
+        Self {
+            version,
+            name,
+            apply,
+        }
+    }
 }
 
 const MIGRATIONS: &[Migration] = &[Migration {
@@ -205,10 +323,12 @@ fn create_feature_state(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     )
 }
 
-fn run_migrations(
+pub fn run_migrations(
     connection: &mut Connection,
     migrations: &[Migration],
 ) -> Result<(), PersistenceError> {
+    validate_migration_plan(migrations)
+        .map_err(|source| PersistenceError::InvalidMigrationPlan { source })?;
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -219,7 +339,7 @@ fn run_migrations(
         )
         .map_err(|source| PersistenceError::Sqlite { source })?;
 
-    let current_version = schema_version(connection)?;
+    let current_version = database_schema_version(connection)?;
     let latest_supported_version = migrations.last().map_or(0, |migration| migration.version);
     if current_version > latest_supported_version {
         return Err(PersistenceError::FutureSchema {
@@ -295,7 +415,33 @@ fn run_migrations(
     Ok(())
 }
 
-fn schema_version(connection: &Connection) -> Result<i64, PersistenceError> {
+fn validate_migration_plan(migrations: &[Migration]) -> Result<(), MigrationPlanError> {
+    let mut previous_version = None;
+    for migration in migrations {
+        if migration.version <= 0 {
+            return Err(MigrationPlanError::NonPositiveVersion {
+                version: migration.version,
+            });
+        }
+        if migration.name.is_empty() {
+            return Err(MigrationPlanError::EmptyName {
+                version: migration.version,
+            });
+        }
+        if let Some(previous_version) = previous_version
+            && migration.version <= previous_version
+        {
+            return Err(MigrationPlanError::VersionsNotStrictlyIncreasing {
+                previous_version,
+                version: migration.version,
+            });
+        }
+        previous_version = Some(migration.version);
+    }
+    Ok(())
+}
+
+pub fn database_schema_version(connection: &Connection) -> Result<i64, PersistenceError> {
     connection
         .query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -400,6 +546,85 @@ mod tests {
             .optional()
             .unwrap();
         assert_eq!(table, None);
-        assert_eq!(schema_version(&connection).unwrap(), 0);
+        assert_eq!(database_schema_version(&connection).unwrap(), 0);
+    }
+
+    #[test]
+    fn invalid_migration_plans_do_not_create_metadata_or_apply_sql() {
+        fn creates_table(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+            transaction.execute_batch("CREATE TABLE should_not_exist (value TEXT);")
+        }
+
+        let cases = [
+            (
+                vec![Migration::new(0, "invalid", creates_table)],
+                MigrationPlanError::NonPositiveVersion { version: 0 },
+            ),
+            (
+                vec![
+                    Migration::new(2, "first", creates_table),
+                    Migration::new(2, "duplicate", creates_table),
+                ],
+                MigrationPlanError::VersionsNotStrictlyIncreasing {
+                    previous_version: 2,
+                    version: 2,
+                },
+            ),
+            (
+                vec![
+                    Migration::new(2, "first", creates_table),
+                    Migration::new(1, "descending", creates_table),
+                ],
+                MigrationPlanError::VersionsNotStrictlyIncreasing {
+                    previous_version: 2,
+                    version: 1,
+                },
+            ),
+            (
+                vec![Migration::new(1, "", creates_table)],
+                MigrationPlanError::EmptyName { version: 1 },
+            ),
+        ];
+
+        for (migrations, expected_error) in cases {
+            let mut connection = Connection::open_in_memory().unwrap();
+            let error = run_migrations(&mut connection, &migrations).unwrap_err();
+            assert!(matches!(
+                &error,
+                PersistenceError::InvalidMigrationPlan { source } if source == &expected_error
+            ));
+            assert!(error.source().is_some());
+            let table_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schema_migrations', 'should_not_exist')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(table_count, 0);
+        }
+    }
+
+    #[test]
+    fn invalid_feature_id_does_not_create_a_feature_directory_or_database() {
+        let directory = tempdir().unwrap();
+        let result =
+            open_feature_database(directory.path(), "invalid", DurabilityProfile::Critical);
+
+        assert!(matches!(
+            &result,
+            Err(PersistenceError::InvalidFeatureId {
+                source: FeatureIdError::MissingPrefix
+            })
+        ));
+        assert!(result.unwrap_err().source().is_some());
+        assert!(!directory.path().join("data/features").exists());
+    }
+
+    #[test]
+    fn empty_migration_plan_is_allowed() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        run_migrations(&mut connection, &[]).unwrap();
+        assert_eq!(database_schema_version(&connection).unwrap(), 0);
     }
 }

@@ -1,6 +1,6 @@
 # Qbit Toolbox
 
-Qbit Toolbox is a Windows desktop toolbox for Qbit workflows. The Foundation bootstrap establishes the monorepo, desktop shell, shared UI, and typed IPC contract; Hotkeys are not implemented yet.
+Qbit Toolbox is a Windows desktop toolbox for Qbit workflows. The Foundation bootstrap establishes the monorepo, desktop shell, shared UI, and typed IPC contract. The Hotkeys domain, persistence, and compiler foundations exist; the Windows runtime hook/SendInput integration and Hotkeys UI are not implemented yet.
 
 See [the architecture](QBIT_TOOLBOX_ARCHITECTURE.md) for the system design.
 

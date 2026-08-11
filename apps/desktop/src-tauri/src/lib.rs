@@ -122,6 +122,11 @@ fn persistence_command_error(error: &PersistenceError) -> CommandErrorDto {
             CommandErrorCategoryDto::Migration,
             "errors.core.migration_failed",
         ),
+        PersistenceError::InvalidMigrationPlan { .. } => command_error(
+            "core_migration_plan_invalid",
+            CommandErrorCategoryDto::Migration,
+            "errors.core.migration_failed",
+        ),
         PersistenceError::FutureSchema { .. } => command_error(
             "core_schema_unsupported",
             CommandErrorCategoryDto::Migration,
@@ -144,6 +149,11 @@ fn persistence_command_error(error: &PersistenceError) -> CommandErrorDto {
         ),
         PersistenceError::InvalidDurabilityProfile { .. } => command_error(
             "core_persistence_profile_invalid",
+            CommandErrorCategoryDto::Persistence,
+            "errors.core.persistence_unavailable",
+        ),
+        PersistenceError::InvalidFeatureId { .. } => command_error(
+            "core_persistence_feature_id_invalid",
             CommandErrorCategoryDto::Persistence,
             "errors.core.persistence_unavailable",
         ),
@@ -224,12 +234,14 @@ fn record_diagnostic(
 fn startup_error_code(error: &CommandErrorDto) -> &'static str {
     match error.code.as_str() {
         "core_migration_failed" => "CORE_MIGRATION_FAILED",
+        "core_migration_plan_invalid" => "CORE_MIGRATION_PLAN_INVALID",
         "core_schema_unsupported" => "CORE_SCHEMA_UNSUPPORTED",
         "core_schema_inconsistent" => "CORE_SCHEMA_INCONSISTENT",
         "core_schema_version_invalid" => "CORE_SCHEMA_VERSION_INVALID",
         "core_app_data_unavailable" => "CORE_APP_DATA_UNAVAILABLE",
         "core_persistence_io_failed" => "CORE_PERSISTENCE_IO_FAILED",
         "core_persistence_database_failed" => "CORE_PERSISTENCE_DATABASE_FAILED",
+        "core_persistence_feature_id_invalid" => "CORE_PERSISTENCE_FEATURE_ID_INVALID",
         "core_persistence_profile_invalid" => "CORE_PERSISTENCE_PROFILE_INVALID",
         _ => "CORE_PERSISTENCE_RECOVERY",
     }
@@ -378,6 +390,35 @@ mod tests {
         assert_eq!(error.category, CommandErrorCategoryDto::Migration);
         assert_eq!(error.code, "core_schema_unsupported");
         assert_eq!(error.message_key, "errors.core.schema_unsupported");
+        assert!(error.context.is_empty());
+    }
+
+    #[test]
+    fn invalid_migration_plan_maps_to_a_safe_migration_error() {
+        let error = persistence_command_error(&PersistenceError::InvalidMigrationPlan {
+            source: persistence::MigrationPlanError::EmptyName { version: 42 },
+        });
+
+        assert_eq!(error.category, CommandErrorCategoryDto::Migration);
+        assert_eq!(error.code, "core_migration_plan_invalid");
+        assert_eq!(startup_error_code(&error), "CORE_MIGRATION_PLAN_INVALID");
+        assert_eq!(error.message_key, "errors.core.migration_failed");
+        assert!(error.context.is_empty());
+    }
+
+    #[test]
+    fn invalid_feature_id_maps_to_a_safe_persistence_error() {
+        let error = persistence_command_error(&PersistenceError::InvalidFeatureId {
+            source: feature_api::FeatureIdError::InvalidCharacter,
+        });
+
+        assert_eq!(error.category, CommandErrorCategoryDto::Persistence);
+        assert_eq!(error.code, "core_persistence_feature_id_invalid");
+        assert_eq!(
+            startup_error_code(&error),
+            "CORE_PERSISTENCE_FEATURE_ID_INVALID"
+        );
+        assert_eq!(error.message_key, "errors.core.persistence_unavailable");
         assert!(error.context.is_empty());
     }
 

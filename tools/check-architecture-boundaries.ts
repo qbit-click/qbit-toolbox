@@ -211,7 +211,11 @@ function cargoUsesRusqlite(file: string): void {
   const path = repoPath(file);
   const text = readText(file);
   if (text === undefined || !hasToken(text, "rusqlite")) return;
-  if (isWithin(path, "crates/persistence")) return;
+  const isFeatureNativePersistence =
+    /^features\/[^/]+\/native\/Cargo\.toml$/.test(path) ||
+    /^features\/[^/]+\/native\/src\/persistence\//.test(path);
+  if (isWithin(path, "crates/persistence") || isFeatureNativePersistence)
+    return;
   if (path === "Cargo.toml") {
     const outsideWorkspaceDependencies = text
       .split(/(?=^\s*\[[^\]]+\]\s*$)/m)
@@ -224,7 +228,7 @@ function cargoUsesRusqlite(file: string): void {
   }
   report(
     file,
-    "rusqlite is allowed only in [workspace.dependencies] or crates/persistence",
+    "rusqlite is allowed only in [workspace.dependencies], crates/persistence, or feature-native persistence modules",
   );
 }
 
