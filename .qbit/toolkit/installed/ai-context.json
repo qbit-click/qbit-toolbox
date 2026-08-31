@@ -5,9 +5,9 @@
     "mode":  "member",
     "projectId":  "qbit",
     "repositoryId":  "qbit-toolbox",
-    "contextRemote":  "https://github.com/qbit-click/qbit-ai-context.git",
+    "contextRemote":  "https://github.com/qbit-hub/qbit-ai-context.git",
     "contextBranch":  "main",
-    "installedAtUtc":  "2026-08-30T20:09:50Z",
+    "installedAtUtc":  "2026-08-31T17:45:25Z",
     "managedFiles":  [
                          {
                              "path":  ".ai/context/.gitignore",
@@ -15,7 +15,7 @@
                          },
                          {
                              "path":  ".ai/context/config.json",
-                             "sha256":  "ec15116cda565dfbb1be128ca661fe1d78a6446f4d3ad0d0bc876897aba735fb"
+                             "sha256":  "1a51e5b9705957c015dc21ff2d3ad8ef4cf327bda39b179e9729cb714846d060"
                          },
                          {
                              "path":  ".ai/context/context-transfer.ps1",
@@ -57,7 +57,7 @@
                               "path":  "AI_CONTEXT.md",
                               "begin":  "\u003c!-- qbit-toolkit:ai-context:start --\u003e",
                               "end":  "\u003c!-- qbit-toolkit:ai-context:end --\u003e",
-                              "sha256":  "a8f295e31198828f2b70a3dfcbaac7b6f4e897d67b3dee1e5601ebda2abc6d8c"
+                              "sha256":  "177c9205215c8d20dcee0184be888ccf4d005bfc00950383b8515e00cf61b14e"
                           }
                       ],
     "seededFiles":  [
